@@ -236,6 +236,11 @@ def list_speakers(segments: list[Segment]) -> list[str]:
 def ai_detect_speakers(text: str, model: str | None = None) -> list[dict]:
     from openai import OpenAI
 
+    if not os.getenv("OPENAI_API_KEY"):
+        raise RuntimeError(
+            "OPENAI_API_KEY não configurada. No Railway, defina essa variável em "
+            "Settings → Variables (o arquivo .env local não vai pro deploy)."
+        )
     client = OpenAI()
     model = model or os.getenv("AI_DETECT_MODEL", "gpt-5.4-mini-2026-03-17")
     sample = text[:8000]

@@ -39,6 +39,9 @@ export const api = {
       body: JSON.stringify(payload),
     }).then(jsonOrThrow),
 
+  cancel: (id) =>
+    fetch(`${BASE}/api/job/${id}/cancel`, { method: 'POST' }).then(jsonOrThrow),
+
   concat: (id) =>
     fetch(`${BASE}/api/job/${id}/concat`, { method: 'POST' }).then(jsonOrThrow),
 

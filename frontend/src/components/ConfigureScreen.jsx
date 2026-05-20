@@ -169,6 +169,17 @@ export default function ConfigureScreen({ job, voices, onUpdate, onCancel }) {
         )}
       </div>
 
+      {job.ai_warning && (
+        <div className="card border-terra/40 bg-terra/5">
+          <h3 className="text-base text-terra mb-1">⚠ Detecção por IA falhou</h3>
+          <p className="text-sm text-ink-soft">{job.ai_warning}</p>
+          <p className="text-xs text-ink-muted mt-1">
+            O texto foi mantido como um único bloco (NARRADOR). Use “Re-detectar personagens”
+            pra informar os nomes manualmente.
+          </p>
+        </div>
+      )}
+
       {job.ai_info?.length > 0 && (
         <div className="card border-marrs/30 bg-marrs-50/40">
           <h3 className="text-base text-marrs-dark mb-2">🤖 Detecção da IA</h3>

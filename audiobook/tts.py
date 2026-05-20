@@ -92,12 +92,18 @@ class Progress:
         self.failed = 0
         self.status = "running"
         self.error: str | None = None
+        self.cancelled = False
         self._lock = threading.Lock()
 
     def tick(self, ok: bool = True):
         with self._lock:
             if ok: self.done += 1
             else: self.failed += 1
+
+    def cancel(self):
+        with self._lock:
+            self.cancelled = True
+            self.status = "cancelled"
 
     def finish(self, error: str | None = None):
         with self._lock:
@@ -109,6 +115,7 @@ class Progress:
             return {
                 "total": self.total, "done": self.done, "failed": self.failed,
                 "status": self.status, "error": self.error,
+                "cancelled": self.cancelled,
             }
 
 
@@ -121,6 +128,8 @@ def synthesize(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     def _one(chunk: Chunk):
+        if progress.cancelled:
+            return
         out = output_dir / f"chunk_{chunk.index:05d}_{chunk.speaker}.mp3"
         if out.exists() and out.stat().st_size > 0:
             chunk.path = out
@@ -134,6 +143,10 @@ def synthesize(
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
         futures = {pool.submit(_one, c): c for c in chunks}
         for fut in as_completed(futures):
+            if progress.cancelled:
+                # Cancela o que ainda não começou; o que está em voo termina rápido.
+                pool.shutdown(wait=False, cancel_futures=True)
+                break
             try:
                 fut.result()
                 progress.tick(ok=True)

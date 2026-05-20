@@ -155,6 +155,7 @@ def api_upload():
     book_context = request.form.get("context", "").strip()
 
     ai_info: list[dict] = []
+    ai_warning: str | None = None
     segments = None
 
     # Modo livro padrão: uma só voz de leitura, sem diálogos entre personagens.
@@ -167,6 +168,7 @@ def api_upload():
         try:
             ai_info = parse.ai_detect_speakers(text)
         except Exception as e:
+            ai_warning = f"Detecção de personagens por IA falhou: {e}"
             print(f"[ai] detect falhou: {e}")
         names = [a["name"] for a in ai_info
                  if a.get("name", "").strip() and a["name"].strip().upper() != parse.NARRATOR]
@@ -190,6 +192,7 @@ def api_upload():
         try:
             ai_info = parse.ai_detect_speakers(text)
         except Exception as e:
+            ai_warning = f"Detecção de personagens por IA falhou: {e}"
             print(f"[ai] detect falhou: {e}")
 
     job = {
@@ -204,6 +207,7 @@ def api_upload():
         "narrator_footnote": narrator_footnote,
         "use_ai": use_ai,
         "ai_info": ai_info,
+        "ai_warning": ai_warning,
         "speakers": speakers,
         "segments": _segments_to_dicts(segments),
         "segment_count": len(segments),
@@ -385,10 +389,15 @@ def api_generate(job_id):
                     chunks=chunks, output_dir=chunks_dir, progress=progress,
                     concurrency=int(os.getenv("TTS_CONCURRENCY", "5")),
                 )
-                paths = [c.path for c in chunks if c.path]
-                concat_mod.write_playlist(paths, _job_dir(job_id) / "playlist.m3u")
-                progress.finish()
-                job["stage"] = "done"
+                if progress.cancelled:
+                    # Cancelado pelo usuário: volta pra configuração (chunks já gerados
+                    # ficam em disco e são reaproveitados se gerar de novo).
+                    job["stage"] = "ready"
+                else:
+                    paths = [c.path for c in chunks if c.path]
+                    concat_mod.write_playlist(paths, _job_dir(job_id) / "playlist.m3u")
+                    progress.finish()
+                    job["stage"] = "done"
         except Exception as e:
             progress.finish(error=str(e))
             job["stage"] = "error"
@@ -399,6 +408,18 @@ def api_generate(job_id):
     t.start()
     job["thread"] = t
     _save_state(job_id)
+    return jsonify(_serialize_job(job))
+
+
+@app.post("/api/job/<job_id>/cancel")
+def api_cancel(job_id):
+    """Cancela a geração do audiobook em andamento. O job volta pra configuração."""
+    job = JOBS.get(job_id)
+    if not job:
+        return jsonify({"error": "Job não encontrado"}), 404
+    prog = job.get("progress_obj")
+    if job.get("stage") == "generating" and prog:
+        prog.cancel()
     return jsonify(_serialize_job(job))
 
 

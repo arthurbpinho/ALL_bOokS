@@ -167,8 +167,14 @@ def translate_segments(
     if not segments:
         return []
 
+    if not os.getenv("OPENAI_API_KEY"):
+        raise RuntimeError(
+            "OPENAI_API_KEY não configurada. No Railway, defina essa variável em "
+            "Settings → Variables (o arquivo .env local não vai pro deploy)."
+        )
+
     client = OpenAI(timeout=180.0, max_retries=4)
-    model = model or os.getenv("AI_DETECT_MODEL", DEFAULT_MODEL)
+    model = model or os.getenv("TRANSLATE_MODEL") or os.getenv("AI_DETECT_MODEL", DEFAULT_MODEL)
     system = _build_system(tone, context)
 
     translated: list[Segment | None] = [None] * len(segments)
@@ -197,28 +203,44 @@ def translate_segments(
         texts = [segments[i].text for i in idxs]
         return idxs, _translate_texts(client, model, system, texts, usage)
 
+    fail_count = 0
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
         future_to_batch = {pool.submit(_do_batch, b): b for b in batches}
         for fut in as_completed(future_to_batch):
             batch = future_to_batch[fut]
             try:
                 idxs, outs = fut.result()
+                ok_n = 0
                 for j, i in enumerate(idxs):
                     seg = segments[i]
                     tr = outs[j] if j < len(outs) else None
                     if tr:
                         translated[i] = Segment(seg.speaker, tr)
                         cache.store(meta, seg.text, tr)
+                        ok_n += 1
                     else:
                         translated[i] = Segment(seg.speaker, seg.text)  # mantém original
-                if progress:
-                    progress.tick(ok=True, count=len(batch))
+                fail_n = len(batch) - ok_n
+                fail_count += fail_n
+                if progress and ok_n:
+                    progress.tick(ok=True, count=ok_n)
+                if progress and fail_n:
+                    progress.tick(ok=False, count=fail_n)
             except Exception as e:
                 print(f"[translate] batch falhou (mantendo original): {e}")
+                fail_count += len(batch)
                 if progress:
                     progress.tick(ok=False, count=len(batch))
 
     total = usage.prompt + usage.completion
     print(f"[translate] tokens: {usage.prompt} entrada + {usage.completion} saída "
-          f"= {total} ({len(missing)} segmentos novos, {hits} do cache)")
+          f"= {total} ({len(missing)} segmentos novos, {hits} do cache, {fail_count} falhas)")
+
+    # Se NADA novo foi traduzido (e havia o que traduzir), é falha real (chave inválida,
+    # cota, modelo sem acesso…). Não devolve tudo em inglês fingindo sucesso.
+    if missing and fail_count == len(missing):
+        raise RuntimeError(
+            "Nenhum segmento foi traduzido — verifique OPENAI_API_KEY, cota da conta "
+            f"e acesso ao modelo ({model}) no Railway."
+        )
     return [t or s for t, s in zip(translated, segments)]

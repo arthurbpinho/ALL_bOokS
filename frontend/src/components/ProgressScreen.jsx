@@ -1,8 +1,9 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 
 export default function ProgressScreen({ job, onUpdate }) {
   const intervalRef = useRef(null)
+  const [cancelling, setCancelling] = useState(false)
 
   useEffect(() => {
     intervalRef.current = setInterval(async () => {
@@ -14,6 +15,18 @@ export default function ProgressScreen({ job, onUpdate }) {
     }, 1500)
     return () => clearInterval(intervalRef.current)
   }, [job.id, onUpdate])
+
+  async function handleCancel() {
+    if (cancelling) return
+    if (!confirm('Cancelar a geração do audiobook? Os trechos já prontos são mantidos.')) return
+    setCancelling(true)
+    try {
+      await api.cancel(job.id)
+    } catch (e) {
+      setCancelling(false)
+    }
+    // O polling detecta a mudança de stage e troca de tela sozinho.
+  }
 
   const p = job.progress || { total: 0, done: 0, failed: 0 }
   const pct = p.total ? Math.round(100 * p.done / p.total) : 0
@@ -50,6 +63,10 @@ export default function ProgressScreen({ job, onUpdate }) {
           Pode fechar a aba — a geração continua no servidor. Reabra <code>{location.origin}</code> pra acompanhar.
         </p>
       </div>
+
+      <button onClick={handleCancel} disabled={cancelling} className="btn btn-ghost text-sm">
+        {cancelling ? 'Cancelando…' : 'Cancelar geração'}
+      </button>
     </div>
   )
 }
