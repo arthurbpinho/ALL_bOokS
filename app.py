@@ -9,8 +9,10 @@ import io
 import json
 import os
 import re
+import shutil
 import tempfile
 import threading
+import time
 import uuid
 from dataclasses import asdict
 from pathlib import Path
@@ -41,6 +43,46 @@ CORS(app, resources={r"/api/*": {"origins": "*"}})
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024
 
 JOBS: dict[str, dict] = {}
+
+# Jobs mais antigos que isso são apagados do disco (controla o volume no Railway).
+# 0 desativa. Padrão: 7 dias.
+CLEANUP_TTL_HOURS = float(os.getenv("CLEANUP_TTL_HOURS", "168"))
+
+
+# ============== Limpeza de disco ==============
+
+def _cleanup_old_jobs():
+    """Remove pastas de jobs antigas. Não toca em jobs ainda rodando."""
+    if CLEANUP_TTL_HOURS <= 0 or not OUTPUTS.exists():
+        return
+    cutoff = time.time() - CLEANUP_TTL_HOURS * 3600
+    removed = 0
+    for d in OUTPUTS.iterdir():
+        if not d.is_dir():
+            continue
+        job = JOBS.get(d.name)
+        if job and job.get("stage") in {"generating", "translating"}:
+            continue
+        try:
+            if d.stat().st_mtime < cutoff:
+                shutil.rmtree(d, ignore_errors=True)
+                JOBS.pop(d.name, None)
+                removed += 1
+        except OSError:
+            pass
+    if removed:
+        print(f"[cleanup] {removed} pasta(s) de job com +{CLEANUP_TTL_HOURS}h removida(s)")
+
+
+def _start_cleanup_loop():
+    _cleanup_old_jobs()  # roda já no boot (quando o container acorda)
+
+    def _loop():
+        while True:
+            time.sleep(6 * 3600)
+            _cleanup_old_jobs()
+
+    threading.Thread(target=_loop, daemon=True).start()
 
 
 # ============== Helpers ==============
@@ -488,6 +530,9 @@ def serve_frontend(path):
     if path and target.exists() and target.is_file():
         return send_from_directory(FRONTEND_DIST, path)
     return send_from_directory(FRONTEND_DIST, "index.html")
+
+
+_start_cleanup_loop()
 
 
 if __name__ == "__main__":
