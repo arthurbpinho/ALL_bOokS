@@ -106,11 +106,23 @@ class _Usage:
             self.completion += getattr(usage, "completion_tokens", 0) or 0
 
 
+class _Errors:
+    """Guarda o último erro real da API pra surfar na mensagem final."""
+    def __init__(self):
+        self.last: str | None = None
+        self._lock = threading.Lock()
+
+    def add(self, e: Exception):
+        with self._lock:
+            self.last = f"{type(e).__name__}: {e}"
+
+
 def _reasoning() -> str:
     return os.getenv("TRANSLATE_REASONING", "none")
 
 
-def _translate_texts(client, model, system, texts: list[str], usage: "_Usage") -> list[str | None]:
+def _translate_texts(client, model, system, texts: list[str], usage: "_Usage",
+                     errors: "_Errors") -> list[str | None]:
     """Traduz uma lista de strings. Retorna lista do mesmo tamanho (None onde falhar)."""
     payload = json.dumps({"items": texts}, ensure_ascii=False)
     user = (
@@ -134,13 +146,15 @@ def _translate_texts(client, model, system, texts: list[str], usage: "_Usage") -
             return out
         print(f"[translate] contagem divergente ({len(out)} vs {len(texts)}), indo 1 a 1")
     except Exception as e:
+        errors.add(e)
         print(f"[translate] batch JSON falhou ({e}), indo 1 a 1")
 
     # Fallback: traduz cada um isoladamente
-    return [_translate_one(client, model, system, t, usage) for t in texts]
+    return [_translate_one(client, model, system, t, usage, errors) for t in texts]
 
 
-def _translate_one(client, model, system, text: str, usage: "_Usage") -> str | None:
+def _translate_one(client, model, system, text: str, usage: "_Usage",
+                   errors: "_Errors") -> str | None:
     try:
         resp = client.chat.completions.create(
             model=model,
@@ -152,6 +166,7 @@ def _translate_one(client, model, system, text: str, usage: "_Usage") -> str | N
         usage.add(resp.usage)
         return (resp.choices[0].message.content or "").strip() or None
     except Exception as e:
+        errors.add(e)
         print(f"[translate] segmento falhou: {e}")
         return None
 
@@ -198,10 +213,11 @@ def translate_segments(
     # ---- 2. Traduz o que falta ----
     batches = _group_batches(segments, indices=missing)
     usage = _Usage()
+    errors = _Errors()
 
     def _do_batch(idxs: list[int]):
         texts = [segments[i].text for i in idxs]
-        return idxs, _translate_texts(client, model, system, texts, usage)
+        return idxs, _translate_texts(client, model, system, texts, usage, errors)
 
     fail_count = 0
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
@@ -239,8 +255,9 @@ def translate_segments(
     # Se NADA novo foi traduzido (e havia o que traduzir), é falha real (chave inválida,
     # cota, modelo sem acesso…). Não devolve tudo em inglês fingindo sucesso.
     if missing and fail_count == len(missing):
+        detail = f" Erro da API: {errors.last}" if errors.last else ""
         raise RuntimeError(
             "Nenhum segmento foi traduzido — verifique OPENAI_API_KEY, cota da conta "
-            f"e acesso ao modelo ({model}) no Railway."
+            f"e acesso ao modelo ({model}) no Railway.{detail}"
         )
     return [t or s for t, s in zip(translated, segments)]
