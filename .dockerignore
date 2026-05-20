@@ -1,0 +1,15 @@
+.git
+.venv
+venv
+__pycache__
+*.pyc
+.env
+outputs
+uploads
+cache
+frontend/node_modules
+frontend/dist
+frontend/.vite
+traducao_salva_*.txt
+*.log
+.claude

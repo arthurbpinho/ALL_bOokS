@@ -1,0 +1,15 @@
+.env
+outputs/
+uploads/
+cache/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Artefatos de tradução salvos localmente
+traducao_salva_*.txt
+*.log
+
+# Config local do Claude Code
+.claude/settings.local.json

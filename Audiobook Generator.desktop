@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Audiobook Generator
+Comment=Sobe backend Flask e frontend React e abre no navegador
+Exec=gnome-terminal --title="Audiobook Generator" --working-directory="/home/arthur/Projetos/audiobook app" -- bash -c "./run.sh; echo ''; echo 'Pressione Enter pra fechar...'; read"
+Icon=audio-headphones
+Terminal=false
+Categories=AudioVideo;Development;
+StartupNotify=true
