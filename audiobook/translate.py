@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -23,18 +24,53 @@ BATCH_WORDS = 3500
 DEFAULT_MODEL = "gpt-5.4-mini-2026-03-17"
 
 
-def _group_batches(
-    segments: list[Segment],
+def _split_for_translation(text: str, max_words: int = BATCH_WORDS) -> list[str]:
+    """Quebra um segmento grande em pedaços traduzíveis.
+
+    Sem isso, um segmento enorme (ex.: livro inteiro no modo voz única, ou um
+    bloco longo de narração) vira UM request único que estoura o limite de
+    tokens por minuto da OpenAI (429 'Request too large'). Divide em fronteiras
+    de frase; os pedaços são remontados depois da tradução.
+    """
+    text = text.strip()
+    if not text:
+        return []
+    if len(text.split()) <= max_words:
+        return [text]
+    sentences = re.split(r"(?<=[.!?…])\s+", text)
+    pieces: list[str] = []
+    cur: list[str] = []
+    cur_w = 0
+    for s in sentences:
+        if not s:
+            continue
+        sw = len(s.split())
+        if sw > max_words:
+            # Frase única gigante (PDF mal extraído): corta por palavras.
+            if cur:
+                pieces.append(" ".join(cur)); cur = []; cur_w = 0
+            words = s.split()
+            for j in range(0, len(words), max_words):
+                pieces.append(" ".join(words[j:j + max_words]))
+            continue
+        if cur and cur_w + sw > max_words:
+            pieces.append(" ".join(cur)); cur = []; cur_w = 0
+        cur.append(s); cur_w += sw
+    if cur:
+        pieces.append(" ".join(cur))
+    return pieces
+
+
+def _group_text_batches(
+    texts: list[str],
+    indices: list[int],
     max_words: int = BATCH_WORDS,
-    indices: list[int] | None = None,
 ) -> list[list[int]]:
-    if indices is None:
-        indices = list(range(len(segments)))
     batches: list[list[int]] = []
     current: list[int] = []
     current_words = 0
     for i in indices:
-        words = len(segments[i].text.split())
+        words = len(texts[i].split())
         if current and current_words + words > max_words:
             batches.append(current)
             current = []
@@ -176,7 +212,7 @@ def translate_segments(
     tone: str = "",
     context: str = "",
     model: str | None = None,
-    concurrency: int = 4,
+    concurrency: int = 3,
     progress: TranslationProgress | None = None,
 ) -> list[Segment]:
     if not segments:
@@ -188,35 +224,47 @@ def translate_segments(
             "Settings → Variables (o arquivo .env local não vai pro deploy)."
         )
 
-    client = OpenAI(timeout=180.0, max_retries=4)
+    client = OpenAI(timeout=180.0, max_retries=6)
     model = model or os.getenv("TRANSLATE_MODEL") or os.getenv("AI_DETECT_MODEL", DEFAULT_MODEL)
     system = _build_system(tone, context)
 
-    translated: list[Segment | None] = [None] * len(segments)
+    # Expande segmentos em pedaços traduzíveis. Segmentos grandes (livro inteiro no
+    # modo voz única, blocos longos de narração) viram vários pedaços pra não estourar
+    # o limite de tokens por minuto da OpenAI. Cada pedaço é remontado no fim.
+    pieces: list[str] = []
+    owner: list[int] = []  # índice do segmento dono de cada pedaço
+    for i, seg in enumerate(segments):
+        for p in _split_for_translation(seg.text):
+            pieces.append(p)
+            owner.append(i)
+    if progress:
+        progress.total = len(pieces)
 
-    # ---- 1. Cache ----
+    translated_pieces: list[str | None] = [None] * len(pieces)
+
+    # ---- 1. Cache (por pedaço; pedaço == texto original quando o segmento não é dividido) ----
     meta = f"{model}\x00{tone}\x00{context}"
     missing: list[int] = []
     hits = 0
-    for i, seg in enumerate(segments):
-        cached = cache.load(meta, seg.text)
+    for k, p in enumerate(pieces):
+        cached = cache.load(meta, p)
         if cached is not None:
-            translated[i] = Segment(seg.speaker, cached)
+            translated_pieces[k] = cached
             hits += 1
         else:
-            missing.append(i)
+            missing.append(k)
     if hits and progress:
         progress.tick(ok=True, count=hits)
     if hits:
         print(f"[translate] cache: {hits} reusados, {len(missing)} a traduzir")
 
     # ---- 2. Traduz o que falta ----
-    batches = _group_batches(segments, indices=missing)
+    batches = _group_text_batches(pieces, missing)
     usage = _Usage()
     errors = _Errors()
 
     def _do_batch(idxs: list[int]):
-        texts = [segments[i].text for i in idxs]
+        texts = [pieces[k] for k in idxs]
         return idxs, _translate_texts(client, model, system, texts, usage, errors)
 
     fail_count = 0
@@ -227,15 +275,13 @@ def translate_segments(
             try:
                 idxs, outs = fut.result()
                 ok_n = 0
-                for j, i in enumerate(idxs):
-                    seg = segments[i]
+                for j, k in enumerate(idxs):
                     tr = outs[j] if j < len(outs) else None
                     if tr:
-                        translated[i] = Segment(seg.speaker, tr)
-                        cache.store(meta, seg.text, tr)
+                        translated_pieces[k] = tr
+                        cache.store(meta, pieces[k], tr)
                         ok_n += 1
-                    else:
-                        translated[i] = Segment(seg.speaker, seg.text)  # mantém original
+                    # senão: deixa None → remontagem usa o pedaço original
                 fail_n = len(batch) - ok_n
                 fail_count += fail_n
                 if progress and ok_n:
@@ -250,14 +296,28 @@ def translate_segments(
 
     total = usage.prompt + usage.completion
     print(f"[translate] tokens: {usage.prompt} entrada + {usage.completion} saída "
-          f"= {total} ({len(missing)} segmentos novos, {hits} do cache, {fail_count} falhas)")
+          f"= {total} ({len(missing)} pedaços novos, {hits} do cache, {fail_count} falhas)")
 
     # Se NADA novo foi traduzido (e havia o que traduzir), é falha real (chave inválida,
-    # cota, modelo sem acesso…). Não devolve tudo em inglês fingindo sucesso.
+    # cota, modelo sem acesso, request grande demais…). Não devolve tudo em inglês.
     if missing and fail_count == len(missing):
         detail = f" Erro da API: {errors.last}" if errors.last else ""
         raise RuntimeError(
             "Nenhum segmento foi traduzido — verifique OPENAI_API_KEY, cota da conta "
             f"e acesso ao modelo ({model}) no Railway.{detail}"
         )
-    return [t or s for t, s in zip(translated, segments)]
+
+    # ---- 3. Remonta os pedaços traduzidos de cada segmento ----
+    seg_pieces: list[list[int]] = [[] for _ in segments]
+    for k, i in enumerate(owner):
+        seg_pieces[i].append(k)
+    result: list[Segment] = []
+    for i, seg in enumerate(segments):
+        ks = seg_pieces[i]
+        if not ks:
+            result.append(Segment(seg.speaker, seg.text))
+            continue
+        parts = [translated_pieces[k] if translated_pieces[k] is not None else pieces[k]
+                 for k in ks]
+        result.append(Segment(seg.speaker, " ".join(parts).strip()))
+    return result
