@@ -45,8 +45,8 @@ app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024
 JOBS: dict[str, dict] = {}
 
 # Jobs mais antigos que isso são apagados do disco (controla o volume no Railway).
-# 0 desativa. Padrão: 7 dias.
-CLEANUP_TTL_HOURS = float(os.getenv("CLEANUP_TTL_HOURS", "168"))
+# 0 desativa. Padrão: 48h — gera e baixa logo depois, não precisa guardar muito.
+CLEANUP_TTL_HOURS = float(os.getenv("CLEANUP_TTL_HOURS", "48"))
 
 
 # ============== Limpeza de disco ==============
