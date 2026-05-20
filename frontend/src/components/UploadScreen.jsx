@@ -3,6 +3,7 @@ import { api } from '../api'
 
 export default function UploadScreen({ patterns, onUploaded }) {
   const [file, setFile] = useState(null)
+  const [bookMode, setBookMode] = useState('single') // 'single' (livro padrão, 1 voz) | 'dialogue' (vozes por personagem)
   const [mode, setMode] = useState('manual') // 'manual' | 'pattern'
   const [speakersManual, setSpeakersManual] = useState('')
   const [aiDetectNames, setAiDetectNames] = useState(false)
@@ -26,17 +27,22 @@ export default function UploadScreen({ patterns, onUploaded }) {
     try {
       const fd = new FormData()
       fd.append('file', file)
-      if (mode === 'manual') {
-        fd.append('speakers_manual', speakersManual)
-        fd.append('ai_detect_names', aiDetectNames ? 'true' : 'false')
-      } else {
-        fd.append('pattern', pattern)
-        fd.append('custom_regex', customRegex)
+      const single = bookMode === 'single'
+      fd.append('single_voice', single ? 'true' : 'false')
+      // Em livro padrão (1 voz) os campos de personagem/formatação são ignorados pelo backend.
+      if (!single) {
+        if (mode === 'manual') {
+          fd.append('speakers_manual', speakersManual)
+          fd.append('ai_detect_names', aiDetectNames ? 'true' : 'false')
+        } else {
+          fd.append('pattern', pattern)
+          fd.append('custom_regex', customRegex)
+        }
+        fd.append('use_ai', useAi ? 'true' : 'false')
+        fd.append('narrator_italic', narratorItalic ? 'true' : 'false')
+        fd.append('narrator_bold', narratorBold ? 'true' : 'false')
+        fd.append('narrator_footnote', narratorFootnote ? 'true' : 'false')
       }
-      fd.append('use_ai', useAi ? 'true' : 'false')
-      fd.append('narrator_italic', narratorItalic ? 'true' : 'false')
-      fd.append('narrator_bold', narratorBold ? 'true' : 'false')
-      fd.append('narrator_footnote', narratorFootnote ? 'true' : 'false')
       fd.append('output_lang', outputLang)
       fd.append('translate', (outputLang === 'pt' && translate) ? 'true' : 'false')
       fd.append('tone', tone)
@@ -68,6 +74,36 @@ export default function UploadScreen({ patterns, onUploaded }) {
         <div className="section-head">
           <span className="step-num">1</span>
           <div>
+            <span className="eyebrow mb-0">Tipo de leitura</span>
+            <h3 className="text-2xl leading-none">Como narrar o livro</h3>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <button type="button" onClick={() => setBookMode('single')}
+            className={`p-4 rounded-lg border text-left transition-colors
+              ${bookMode === 'single' ? 'border-marrs bg-marrs-50' : 'border-line hover:border-marrs/50'}`}>
+            <div className="font-semibold text-ink flex items-center gap-2">📖 Livro padrão <span className="badge bg-marrs-50 text-marrs-dark">recomendado</span></div>
+            <div className="text-sm text-ink-soft mt-1.5">
+              Uma só voz de leitura, sem diálogos entre personagens. Ideal para
+              romances de um narrador e textos científicos ou filosóficos mais densos.
+            </div>
+          </button>
+          <button type="button" onClick={() => setBookMode('dialogue')}
+            className={`p-4 rounded-lg border text-left transition-colors
+              ${bookMode === 'dialogue' ? 'border-marrs bg-marrs-50' : 'border-line hover:border-marrs/50'}`}>
+            <div className="font-semibold text-ink">🎭 Diálogos com vozes</div>
+            <div className="text-sm text-ink-soft mt-1.5">
+              Vozes distintas por personagem. Para peças, entrevistas e ficção com
+              muitas falas marcadas (ex.: <code className="chip">NOME:</code>).
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="section-head">
+          <span className="step-num">2</span>
+          <div>
             <span className="eyebrow mb-0">Começo</span>
             <h3 className="text-2xl leading-none">Enviar livro</h3>
           </div>
@@ -82,7 +118,7 @@ export default function UploadScreen({ patterns, onUploaded }) {
           className="block w-full text-sm text-ink-soft
                      file:mr-4 file:py-2.5 file:px-5 file:rounded-full
                      file:border-0 file:bg-marrs file:text-cream file:font-medium
-                     hover:file:bg-marrs-dark file:cursor-pointer file:shadow-marrs"
+                     hover:file:bg-marrs-dark file:cursor-pointer"
           required
         />
         {file && (
@@ -92,9 +128,10 @@ export default function UploadScreen({ patterns, onUploaded }) {
         )}
       </div>
 
+      {bookMode === 'dialogue' && (<>
       <div className="card">
         <div className="section-head">
-          <span className="step-num">2</span>
+          <span className="step-num">3</span>
           <div>
             <span className="eyebrow mb-0">Personagens</span>
             <h3 className="text-2xl leading-none">Como identificar as falas</h3>
@@ -173,7 +210,7 @@ export default function UploadScreen({ patterns, onUploaded }) {
 
       <div className="card">
         <div className="section-head">
-          <span className="step-num">3</span>
+          <span className="step-num">4</span>
           <div>
             <span className="eyebrow mb-0">Refinamento</span>
             <h3 className="text-2xl leading-none">Narração por formatação</h3>
@@ -201,10 +238,11 @@ export default function UploadScreen({ patterns, onUploaded }) {
           </span>
         </label>
       </div>
+      </>)}
 
       <div className="card">
         <div className="section-head">
-          <span className="step-num">4</span>
+          <span className="step-num">{bookMode === 'dialogue' ? '5' : '3'}</span>
           <div>
             <span className="eyebrow mb-0">Saída</span>
             <h3 className="text-2xl leading-none">Idioma do audiobook</h3>

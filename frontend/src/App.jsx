@@ -10,10 +10,16 @@ export default function App() {
   const [job, setJob] = useState(null)
   const [voices, setVoices] = useState([])
   const [patterns, setPatterns] = useState({})
+  const [showIntro, setShowIntro] = useState(true)
 
   useEffect(() => {
     api.voices().then(setVoices).catch(console.error)
     api.patterns().then(setPatterns).catch(console.error)
+  }, [])
+
+  useEffect(() => {
+    const t = setTimeout(() => setShowIntro(false), 2700)
+    return () => clearTimeout(t)
   }, [])
 
   const reset = () => setJob(null)
@@ -35,6 +41,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col">
+      {showIntro && <Intro onSkip={() => setShowIntro(false)} />}
       <header className="border-b border-sand bg-cream/85 backdrop-blur sticky top-0 z-10">
         <div className="max-w-5xl mx-auto px-6 py-3.5 flex items-center justify-between">
           <button onClick={reset} className="flex items-center gap-3 group">
@@ -69,6 +76,31 @@ export default function App() {
           </p>
         </div>
       </footer>
+    </div>
+  )
+}
+
+function Brand({ className = '' }) {
+  return (
+    <span className={className}>
+      <span className="text-marrs">ALL</span><span className="text-terra">b</span><span className="text-marrs">O</span><span className="text-terra">ok</span><span className="text-marrs">S</span>
+    </span>
+  )
+}
+
+function Intro({ onSkip }) {
+  return (
+    <div className="intro-overlay" onClick={onSkip} role="presentation">
+      <div className="text-center px-6">
+        <img src="/icon.svg" alt="" className="intro-logo w-20 h-20 mx-auto mb-7 rounded-2xl" />
+        <h1 className="font-serif leading-[1.1] text-5xl md:text-7xl">
+          <span className="intro-line block">Transforme livros em</span>
+          <span className="intro-line intro-line-2 block"><em className="text-marrs not-italic">tradução e voz</em></span>
+        </h1>
+        <p className="intro-line intro-line-3 mt-6 text-sm md:text-base uppercase tracking-[0.22em] text-ink-soft">
+          com o <Brand className="font-semibold" />
+        </p>
+      </div>
     </div>
   )
 }

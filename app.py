@@ -140,6 +140,7 @@ def api_upload():
     (job_path / "text.txt").write_text(text, encoding="utf-8")
 
     pattern_key = request.form.get("pattern", "uppercase_colon")
+    single_voice = request.form.get("single_voice") == "true"
     use_ai = request.form.get("use_ai") == "true"
     ai_detect_names = request.form.get("ai_detect_names") == "true"
     custom_regex = request.form.get("custom_regex", "").strip()
@@ -156,8 +157,13 @@ def api_upload():
     ai_info: list[dict] = []
     segments = None
 
+    # Modo livro padrão: uma só voz de leitura, sem diálogos entre personagens.
+    # Todo o texto vira NARRADOR (parse_with_speakers com lista vazia).
+    if single_voice:
+        segments = parse.parse_with_speakers(text, [])
+
     # A própria IA identifica os nomes dos personagens
-    if ai_detect_names:
+    if segments is None and ai_detect_names:
         try:
             ai_info = parse.ai_detect_speakers(text)
         except Exception as e:
@@ -189,6 +195,7 @@ def api_upload():
     job = {
         "id": job_id,
         "filename": f.filename,
+        "single_voice": single_voice,
         "pattern": pattern_key,
         "custom_regex": custom_regex,
         "speakers_manual": speakers_manual,

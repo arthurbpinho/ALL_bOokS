@@ -136,6 +136,39 @@ main > form > *:nth-child(7), main > div > *:nth-child(7) { animation-delay: 0.3
 /* Header com leve fade ao montar */
 header { animation: fadeIn 0.6s ease both; }
 
+/* ── Animação de entrada (splash ao abrir o app) ── */
+@keyframes introOut {
+  to { opacity: 0; visibility: hidden; }
+}
+@keyframes introPop {
+  0%   { opacity: 0; transform: scale(0.6) rotate(-8deg); }
+  60%  { opacity: 1; transform: scale(1.08) rotate(2deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0); }
+}
+.intro-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background:
+    radial-gradient(900px 700px at 50% -10%, rgba(0,143,143,0.10) 0%, transparent 60%),
+    #F2EBDD;
+  animation: introOut 0.55s ease 2.15s forwards;
+}
+.intro-logo {
+  box-shadow: 0 12px 40px rgba(0,143,143,0.22);
+  animation: introPop 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.1s both;
+}
+.intro-line {
+  animation: fadeInUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.intro-line              { animation-delay: 0.40s; }
+.intro-line.intro-line-2 { animation-delay: 0.65s; }
+.intro-line.intro-line-3 { animation-delay: 1.00s; }
+
 /* Divisória ornamental editorial */
 .ornament {
   display: flex;
