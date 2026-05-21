@@ -32,7 +32,7 @@ print(f"Total de chunks: {len(chunks)}")
 
 chunks_dir = job_dir / "chunks"
 existing = sum(1 for c in chunks
-               if (chunks_dir / f"chunk_{c.index:05d}_{c.speaker}.mp3").exists())
+               if (chunks_dir / tts.chunk_filename(c.index, c.speaker)).exists())
 print(f"Já em disco (serão reusados): {existing} · faltando: {len(chunks)-existing}")
 
 progress = tts.Progress(total=len(chunks))

@@ -7,11 +7,17 @@ export default function TranslateScreen({ job, onUpdate, onCancel }) {
   useEffect(() => {
     intervalRef.current = setInterval(async () => {
       try {
-        const fresh = await api.getJob(job.id)
-        onUpdate(fresh)
-        if (fresh.stage !== 'translating') clearInterval(intervalRef.current)
+        // Payload mínimo durante a tradução; só baixa o job inteiro ao terminar.
+        const fresh = await api.getProgress(job.id)
+        if (fresh.stage === 'translating') {
+          onUpdate(prev => ({ ...prev, stage: fresh.stage, trans_progress: fresh.trans_progress }))
+        } else {
+          clearInterval(intervalRef.current)
+          const full = await api.getJob(job.id)
+          onUpdate(full)
+        }
       } catch (e) { /* ignore */ }
-    }, 1500)
+    }, 2000)
     return () => clearInterval(intervalRef.current)
   }, [job.id, onUpdate])
 

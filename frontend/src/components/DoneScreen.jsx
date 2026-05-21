@@ -85,7 +85,6 @@ export default function DoneScreen({ job, onReset }) {
                 <span className="chip">{String(c.index).padStart(5, '0')}</span>
                 <span className="font-mono text-xs text-marrs-dark w-24 shrink-0">{c.speaker}</span>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm truncate text-ink">{c.text}</p>
                   <a className="text-xs text-ink-muted hover:text-marrs"
                      href={api.fileUrl(job.id, c.filename)} download>
                     {c.filename}

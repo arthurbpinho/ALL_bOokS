@@ -5,17 +5,26 @@ import TranslateScreen from './components/TranslateScreen'
 import ConfigureScreen from './components/ConfigureScreen'
 import ProgressScreen from './components/ProgressScreen'
 import DoneScreen from './components/DoneScreen'
+import LoginScreen from './components/LoginScreen'
+import AdminUsers from './components/AdminUsers'
 
 export default function App() {
+  const [user, setUser] = useState(undefined)  // undefined=verificando, null=deslogado
   const [job, setJob] = useState(null)
   const [voices, setVoices] = useState([])
-  const [patterns, setPatterns] = useState({})
   const [showIntro, setShowIntro] = useState(true)
+  const [showAdmin, setShowAdmin] = useState(false)
 
+  // Checa a sessão no carregamento
   useEffect(() => {
-    api.voices().then(setVoices).catch(console.error)
-    api.patterns().then(setPatterns).catch(console.error)
+    api.me().then(setUser).catch(() => setUser(null))
   }, [])
+
+  // Metadados só depois de logado (a API exige sessão)
+  useEffect(() => {
+    if (!user) return
+    api.voices().then(setVoices).catch(console.error)
+  }, [user])
 
   useEffect(() => {
     const t = setTimeout(() => setShowIntro(false), 2700)
@@ -24,9 +33,22 @@ export default function App() {
 
   const reset = () => setJob(null)
 
+  async function logout() {
+    try { await api.logout() } catch { /* ignore */ }
+    setJob(null)
+    setUser(null)
+  }
+
+  if (user === undefined) {
+    return <div className="min-h-screen flex items-center justify-center text-ink-muted">Carregando…</div>
+  }
+  if (!user) {
+    return <LoginScreen onLogin={setUser} />
+  }
+
   let screen
   if (!job) {
-    screen = <UploadScreen patterns={patterns} onUploaded={setJob} />
+    screen = <UploadScreen onUploaded={setJob} />
   } else if (job.stage === 'translating') {
     screen = <TranslateScreen job={job} onUpdate={setJob} onCancel={reset} />
   } else if (job.stage === 'ready' || job.stage === 'configuring') {
@@ -56,14 +78,18 @@ export default function App() {
               </span>
             </div>
           </button>
-          {job && (
-            <div className="flex items-center gap-3">
-              <span className="chip hidden sm:inline-flex">job: {job.id}</span>
-              <button onClick={reset} className="btn btn-ghost text-sm">Novo livro</button>
-            </div>
-          )}
+          <div className="flex items-center gap-3">
+            {job && <span className="chip hidden sm:inline-flex">job: {job.id}</span>}
+            {job && <button onClick={reset} className="btn btn-ghost text-sm">Novo livro</button>}
+            {user.is_admin && (
+              <button onClick={() => setShowAdmin(true)} className="btn btn-ghost text-sm">👤 Usuários</button>
+            )}
+            <span className="text-xs text-ink-muted hidden sm:inline">{user.username}</span>
+            <button onClick={logout} className="btn btn-ghost text-sm">Sair</button>
+          </div>
         </div>
       </header>
+      {showAdmin && <AdminUsers onClose={() => setShowAdmin(false)} />}
       <main className="max-w-5xl mx-auto w-full px-6 py-10 flex-1">
         {screen}
       </main>

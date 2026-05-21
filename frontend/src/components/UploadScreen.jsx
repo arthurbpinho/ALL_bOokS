@@ -1,14 +1,11 @@
 import { useState } from 'react'
 import { api } from '../api'
 
-export default function UploadScreen({ patterns, onUploaded }) {
+export default function UploadScreen({ onUploaded }) {
   const [file, setFile] = useState(null)
   const [bookMode, setBookMode] = useState('single') // 'single' (livro padrão, 1 voz) | 'dialogue' (vozes por personagem)
-  const [mode, setMode] = useState('manual') // 'manual' | 'pattern'
   const [speakersManual, setSpeakersManual] = useState('')
   const [aiDetectNames, setAiDetectNames] = useState(false)
-  const [pattern, setPattern] = useState('uppercase_colon')
-  const [customRegex, setCustomRegex] = useState('')
   const [useAi, setUseAi] = useState(false)
   const [narratorItalic, setNarratorItalic] = useState(false)
   const [narratorBold, setNarratorBold] = useState(false)
@@ -31,13 +28,8 @@ export default function UploadScreen({ patterns, onUploaded }) {
       fd.append('single_voice', single ? 'true' : 'false')
       // Em livro padrão (1 voz) os campos de personagem/formatação são ignorados pelo backend.
       if (!single) {
-        if (mode === 'manual') {
-          fd.append('speakers_manual', speakersManual)
-          fd.append('ai_detect_names', aiDetectNames ? 'true' : 'false')
-        } else {
-          fd.append('pattern', pattern)
-          fd.append('custom_regex', customRegex)
-        }
+        fd.append('speakers_manual', speakersManual)
+        fd.append('ai_detect_names', aiDetectNames ? 'true' : 'false')
         fd.append('use_ai', useAi ? 'true' : 'false')
         fd.append('narrator_italic', narratorItalic ? 'true' : 'false')
         fd.append('narrator_bold', narratorBold ? 'true' : 'false')
@@ -137,66 +129,29 @@ export default function UploadScreen({ patterns, onUploaded }) {
             <h3 className="text-2xl leading-none">Como identificar as falas</h3>
           </div>
         </div>
-        <div className="flex gap-2 mb-4">
-          <button type="button" onClick={() => setMode('manual')}
-            className={`flex-1 px-4 py-2.5 rounded-full border text-sm font-medium transition-colors
-              ${mode === 'manual' ? 'border-marrs bg-marrs-50 text-marrs-dark' :
-                'border-line hover:border-marrs/50 text-ink-soft'}`}>
-            ★ Lista de nomes (recomendado)
-          </button>
-          <button type="button" onClick={() => setMode('pattern')}
-            className={`flex-1 px-4 py-2.5 rounded-full border text-sm font-medium transition-colors
-              ${mode === 'pattern' ? 'border-marrs bg-marrs-50 text-marrs-dark' :
-                'border-line hover:border-marrs/50 text-ink-soft'}`}>
-            Padrão / regex
-          </button>
+        <div>
+          <label className="flex items-start gap-3 cursor-pointer mb-4 p-3 rounded border border-sand bg-cream2">
+            <input type="checkbox" className="checkbox mt-0.5"
+              checked={aiDetectNames} onChange={(e) => setAiDetectNames(e.target.checked)} />
+            <span className="text-sm text-ink-soft">
+              <strong className="text-ink">🤖 Deixar a IA identificar os personagens</strong>
+              <br />A IA lê o livro e descobre os nomes sozinha. Útil se você não sabe quem são.
+              <span className="text-ink-muted"> (custa ~$0.01–0.02 a mais)</span>
+            </span>
+          </label>
+          <label className="label">
+            {aiDetectNames ? 'Nomes (opcional — a IA vai decidir)' : 'Nomes dos personagens (separados por vírgula)'}
+          </label>
+          <input type="text" value={speakersManual}
+            onChange={(e) => setSpeakersManual(e.target.value)}
+            disabled={aiDetectNames}
+            placeholder="ex: HILLMAN, VENTURA"
+            className="input font-mono disabled:opacity-50" />
+          <p className="text-xs text-ink-muted mt-2">
+            O parser caça essas palavras seguidas de <code className="chip">:</code> em qualquer
+            lugar do texto. Funciona mesmo se o PDF extraiu tudo numa linha só.
+          </p>
         </div>
-
-        {mode === 'manual' ? (
-          <div>
-            <label className="flex items-start gap-3 cursor-pointer mb-4 p-3 rounded border border-sand bg-cream2">
-              <input type="checkbox" className="checkbox mt-0.5"
-                checked={aiDetectNames} onChange={(e) => setAiDetectNames(e.target.checked)} />
-              <span className="text-sm text-ink-soft">
-                <strong className="text-ink">🤖 Deixar a IA identificar os personagens</strong>
-                <br />A IA lê o livro e descobre os nomes sozinha. Útil se você não sabe quem são.
-                <span className="text-ink-muted"> (custa ~$0.01–0.02 a mais)</span>
-              </span>
-            </label>
-            <label className="label">
-              {aiDetectNames ? 'Nomes (opcional — a IA vai decidir)' : 'Nomes dos personagens (separados por vírgula)'}
-            </label>
-            <input type="text" value={speakersManual}
-              onChange={(e) => setSpeakersManual(e.target.value)}
-              disabled={aiDetectNames}
-              placeholder="ex: HILLMAN, VENTURA"
-              className="input font-mono disabled:opacity-50" />
-            <p className="text-xs text-ink-muted mt-2">
-              O parser caça essas palavras seguidas de <code className="chip">:</code> em qualquer
-              lugar do texto. Funciona mesmo se o PDF extraiu tudo numa linha só.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {Object.entries(patterns).map(([key, p]) => (
-              <label key={key}
-                className={`flex items-start gap-3 p-3 rounded border cursor-pointer transition-colors
-                  ${pattern === key ? 'border-marrs bg-marrs-50' : 'border-line hover:border-marrs/50'}`}>
-                <input type="radio" name="pattern" value={key}
-                  checked={pattern === key} onChange={() => setPattern(key)}
-                  className="mt-1 accent-marrs" />
-                <div className="flex-1">
-                  <div className="font-medium text-ink">{p.label}</div>
-                  <code className="text-xs text-ink-muted">{p.example}</code>
-                </div>
-              </label>
-            ))}
-            <label className="label mt-4">Regex customizado (opcional)</label>
-            <input type="text" value={customRegex}
-              onChange={(e) => setCustomRegex(e.target.value)}
-              placeholder="precisa ter grupo ?P<speaker>" className="input font-mono text-sm" />
-          </div>
-        )}
 
         <label className="flex items-center gap-3 mt-4 cursor-pointer">
           <input type="checkbox" className="checkbox"

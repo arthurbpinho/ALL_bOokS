@@ -1,11 +1,14 @@
 """Parser de falantes.
 
 Estratégia:
-- Regex padrão NÃO ancora em ^ — busca marcadores em qualquer posição do texto.
-  Isso resolve o caso comum onde PDFs extraem parágrafos como uma linha só.
+- parse_with_speakers recebe a lista literal de nomes (['HILLMAN', 'VENTURA']) e
+  caça cada `NOME:` no texto. Os nomes são escapados (re.escape), então não há
+  regex fornecido pelo usuário — sem risco de ReDoS.
 - Conteúdo entre marcadores é atribuído ao último falante encontrado.
 - Texto antes do primeiro marcador vira NARRADOR.
-- Opção alternativa: parse_with_speakers usa lista literal de nomes (mais robusto).
+- Lista vazia → todo o texto vira NARRADOR (modo voz única).
+- Também roteia trechos por IA (ai_detect_speakers) e por formatação (itálico/
+  negrito/nota de rodapé).
 """
 
 from __future__ import annotations
@@ -45,53 +48,6 @@ class Segment:
 
     def to_dict(self) -> dict:
         return {"speaker": self.speaker, "text": self.text}
-
-
-# Padrões prontos pra UI. NÃO usam ^ — finditer caça em todo o texto.
-PATTERNS = {
-    "uppercase_colon": {
-        "label": "NOME: texto (nome em maiúsculas + dois pontos)",
-        "regex": r"\b(?P<speaker>[A-ZÀ-Ý][A-ZÀ-Ý\.\-']{1,30}):\s*",
-        "example": "VENTURA: And that has to be respected.",
-    },
-    "name_colon": {
-        "label": "Nome: texto (qualquer nome + dois pontos)",
-        "regex": r"(?:^|(?<=[\.\!\?\n]\s))(?P<speaker>[A-ZÀ-Ý][\wÀ-ÿ\.\-']{1,30}):\s*",
-        "example": "Ventura: And that has to be respected.",
-    },
-    "dash_name_colon": {
-        "label": "— Nome: texto (travessão + nome + dois pontos)",
-        "regex": r"[—–-]\s*(?P<speaker>[A-ZÀ-Ý][\wÀ-ÿ\.\-']{1,30}):\s*",
-        "example": "— Ventura: And that has to be respected.",
-    },
-}
-
-
-def parse_with_regex(text: str, pattern: str) -> list[Segment]:
-    """Encontra todos os marcadores no texto e atribui o conteúdo entre eles ao falante."""
-    rx = re.compile(pattern, re.MULTILINE)
-    matches = list(rx.finditer(text))
-
-    if not matches:
-        cleaned = _normalize(text)
-        return [Segment(NARRATOR, cleaned)] if cleaned else []
-
-    segments: list[Segment] = []
-
-    # Texto antes do primeiro marcador → NARRADOR
-    pre = _normalize(text[:matches[0].start()])
-    if pre:
-        segments.append(Segment(NARRATOR, pre))
-
-    for i, m in enumerate(matches):
-        speaker = m.group("speaker").strip().upper()
-        content_start = m.end()
-        content_end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        content = _normalize(text[content_start:content_end])
-        if content:
-            segments.append(Segment(speaker, content))
-
-    return segments
 
 
 def parse_with_speakers(text: str, speakers: list[str]) -> list[Segment]:

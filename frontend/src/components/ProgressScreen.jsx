@@ -8,11 +8,17 @@ export default function ProgressScreen({ job, onUpdate }) {
   useEffect(() => {
     intervalRef.current = setInterval(async () => {
       try {
-        const fresh = await api.getJob(job.id)
-        onUpdate(fresh)
-        if (fresh.stage !== 'generating') clearInterval(intervalRef.current)
+        // Payload mínimo durante a geração; só baixa o job inteiro ao terminar.
+        const fresh = await api.getProgress(job.id)
+        if (fresh.stage === 'generating') {
+          onUpdate(prev => ({ ...prev, stage: fresh.stage, progress: fresh.progress }))
+        } else {
+          clearInterval(intervalRef.current)
+          const full = await api.getJob(job.id)
+          onUpdate(full)
+        }
       } catch {}
-    }, 1500)
+    }, 2000)
     return () => clearInterval(intervalRef.current)
   }, [job.id, onUpdate])
 

@@ -19,10 +19,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from flask import (
-    Flask, abort, jsonify, request, send_file, send_from_directory,
+    Flask, abort, jsonify, request, send_file, send_from_directory, session,
 )
+from flask_compress import Compress
 from flask_cors import CORS
 
+from audiobook import auth
 from audiobook import concat as concat_mod
 from audiobook import edge_backend, export, extract, parse, translate, tts
 from audiobook.inhibit import InhibitSuspend
@@ -41,6 +43,21 @@ OUTPUTS.mkdir(exist_ok=True)
 app = Flask(__name__, static_folder=None)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024
+
+# Compressão gzip das respostas de texto/JSON/JS/CSS (NÃO toca em audio/mpeg,
+# que já é comprimido) — corta egress sem afetar a qualidade do áudio.
+Compress(app)
+
+# Sessão assinada por cookie. SECRET_KEY persistida no volume (audiobook.auth)
+# pra não deslogar todo mundo a cada deploy. Cookie HttpOnly + SameSite=Lax
+# protege contra CSRF nas rotas que gastam.
+app.secret_key = auth.get_secret_key()
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.getenv("COOKIE_SECURE", "1") == "1",
+    PERMANENT_SESSION_LIFETIME=30 * 24 * 3600,
+)
 
 JOBS: dict[str, dict] = {}
 
@@ -87,7 +104,15 @@ def _start_cleanup_loop():
 
 # ============== Helpers ==============
 
+# job_id é sempre uuid4().hex[:12]. Validar barra path traversal nas rotas que
+# montam caminho a partir dele (ex.: /files, /export) — antes, job_id=".." escapava
+# de OUTPUTS e podia ler arquivos de fora (inclusive .env em dev).
+_JOB_ID_RE = re.compile(r"^[0-9a-f]{12}$")
+
+
 def _job_dir(job_id: str) -> Path:
+    if not _JOB_ID_RE.match(job_id or ""):
+        abort(404)
     return OUTPUTS / job_id
 
 
@@ -98,8 +123,11 @@ def _serialize_job(job: dict) -> dict:
         if k in skip:
             continue
         if k == "chunks":
+            # Não serializa o `text` do chunk: ele é só um recorte do texto que já
+            # está em `segments`. Guardar nos dois dobrava o state.json (~1,1 MB) e
+            # o payload de cada GET /job. (O texto continua disponível em segments.)
             out[k] = [
-                {**{kk: vv for kk, vv in asdict(c).items() if kk != "path"},
+                {**{kk: vv for kk, vv in asdict(c).items() if kk not in ("path", "text")},
                  "path": str(c.path) if c.path else None,
                  "filename": c.path.name if c.path else None}
                 for c in v
@@ -149,16 +177,80 @@ def _recompute_voice_map(job: dict):
     job["gender_map"] = gender_map
 
 
+# ============== Autenticação ==============
+
+# Únicas rotas /api públicas: login e a checagem de sessão.
+_OPEN_API_PATHS = {"/api/auth/login", "/api/auth/me"}
+
+
+@app.before_request
+def _require_login():
+    """Fecha toda a API atrás de login. O front (SPA + assets) continua público
+    pra conseguir mostrar a tela de login. Rotas /api/auth/users são só do admin."""
+    p = request.path
+    if not p.startswith("/api/") or p in _OPEN_API_PATHS:
+        return
+    if request.method == "OPTIONS":
+        return  # preflight CORS
+    if not session.get("user"):
+        return jsonify({"error": "Não autenticado"}), 401
+    if p.startswith("/api/auth/users") and not session.get("is_admin"):
+        return jsonify({"error": "Apenas o admin pode gerenciar usuários"}), 403
+
+
+@app.post("/api/auth/login")
+def api_login():
+    data = request.json or {}
+    user = auth.verify(data.get("username", ""), data.get("password", ""))
+    if not user:
+        return jsonify({"error": "Usuário ou senha inválidos"}), 401
+    session.permanent = True
+    session["user"] = user["username"]
+    session["is_admin"] = user["is_admin"]
+    return jsonify(user)
+
+
+@app.post("/api/auth/logout")
+def api_logout():
+    session.clear()
+    return jsonify({"ok": True})
+
+
+@app.get("/api/auth/me")
+def api_me():
+    if not session.get("user"):
+        return jsonify({"error": "Não autenticado"}), 401
+    return jsonify({"username": session["user"], "is_admin": session.get("is_admin", False)})
+
+
+@app.get("/api/auth/users")
+def api_list_users():
+    return jsonify(auth.list_users())
+
+
+@app.post("/api/auth/users")
+def api_create_user():
+    data = request.json or {}
+    ok, msg = auth.create_user(
+        data.get("username", ""), data.get("password", ""), bool(data.get("is_admin")))
+    if not ok:
+        return jsonify({"error": msg}), 400
+    return jsonify({"ok": True})
+
+
+@app.delete("/api/auth/users/<username>")
+def api_delete_user(username):
+    ok, msg = auth.delete_user(username)
+    if not ok:
+        return jsonify({"error": msg}), 400
+    return jsonify({"ok": True})
+
+
 # ============== Metadata ==============
 
 @app.get("/api/voices")
 def api_voices():
     return jsonify(VOICES)
-
-
-@app.get("/api/patterns")
-def api_patterns():
-    return jsonify(parse.PATTERNS)
 
 
 # ============== Lifecycle ==============
@@ -181,11 +273,9 @@ def api_upload():
     text = extract.extract(src)
     (job_path / "text.txt").write_text(text, encoding="utf-8")
 
-    pattern_key = request.form.get("pattern", "uppercase_colon")
     single_voice = request.form.get("single_voice") == "true"
     use_ai = request.form.get("use_ai") == "true"
     ai_detect_names = request.form.get("ai_detect_names") == "true"
-    custom_regex = request.form.get("custom_regex", "").strip()
     speakers_manual = request.form.get("speakers_manual", "").strip()
     narrator_italic = request.form.get("narrator_italic") == "true"
     narrator_bold = request.form.get("narrator_bold") == "true"
@@ -217,13 +307,11 @@ def api_upload():
         if names:
             segments = parse.parse_with_speakers(text, names)
 
+    # Lista de nomes manual; sem nomes, cai pra voz única (tudo NARRADOR).
     if segments is None:
-        if speakers_manual:
-            names = [n.strip() for n in re.split(r"[,;\n]+", speakers_manual) if n.strip()]
-            segments = parse.parse_with_speakers(text, names)
-        else:
-            regex = custom_regex or parse.PATTERNS[pattern_key]["regex"]
-            segments = parse.parse_with_regex(text, regex)
+        names = ([n.strip() for n in re.split(r"[,;\n]+", speakers_manual) if n.strip()]
+                 if speakers_manual else [])
+        segments = parse.parse_with_speakers(text, names)
 
     segments = parse.apply_narration_formatting(
         segments, narrator_italic, narrator_bold, narrator_footnote)
@@ -241,8 +329,6 @@ def api_upload():
         "id": job_id,
         "filename": f.filename,
         "single_voice": single_voice,
-        "pattern": pattern_key,
-        "custom_regex": custom_regex,
         "speakers_manual": speakers_manual,
         "narrator_italic": narrator_italic,
         "narrator_bold": narrator_bold,
@@ -273,7 +359,7 @@ def api_upload():
 
 @app.post("/api/job/<job_id>/reparse")
 def api_reparse(job_id):
-    """Re-parse o text.txt salvo com nova lista de personagens ou novo regex."""
+    """Re-parse o text.txt salvo com nova lista de personagens."""
     job = JOBS.get(job_id)
     if not job:
         return jsonify({"error": "Job não encontrado"}), 404
@@ -284,26 +370,19 @@ def api_reparse(job_id):
 
     data = request.json or {}
     speakers_manual = (data.get("speakers_manual") or "").strip()
-    pattern_key = data.get("pattern") or "uppercase_colon"
-    custom_regex = (data.get("custom_regex") or "").strip()
     narrator_italic = bool(data.get("narrator_italic", job.get("narrator_italic", False)))
     narrator_bold = bool(data.get("narrator_bold", job.get("narrator_bold", False)))
     narrator_footnote = bool(data.get("narrator_footnote", job.get("narrator_footnote", False)))
 
-    if speakers_manual:
-        names = [n.strip() for n in re.split(r"[,;\n]+", speakers_manual) if n.strip()]
-        segments = parse.parse_with_speakers(text, names)
-    else:
-        regex = custom_regex or parse.PATTERNS[pattern_key]["regex"]
-        segments = parse.parse_with_regex(text, regex)
+    names = ([n.strip() for n in re.split(r"[,;\n]+", speakers_manual) if n.strip()]
+             if speakers_manual else [])
+    segments = parse.parse_with_speakers(text, names)
 
     segments = parse.apply_narration_formatting(
         segments, narrator_italic, narrator_bold, narrator_footnote)
     segments = parse.merge_consecutive(segments)
 
     job["speakers_manual"] = speakers_manual
-    job["pattern"] = pattern_key
-    job["custom_regex"] = custom_regex
     job["narrator_italic"] = narrator_italic
     job["narrator_bold"] = narrator_bold
     job["narrator_footnote"] = narrator_footnote
@@ -354,6 +433,25 @@ def api_job(job_id):
     if not job:
         return jsonify({"error": "Job não encontrado"}), 404
     return jsonify(_serialize_job(job))
+
+
+@app.get("/api/job/<job_id>/progress")
+def api_job_progress(job_id):
+    """Payload mínimo (~100 bytes) só pro polling da barra de progresso.
+
+    Antes, o front chamava GET /job a cada 1,5s durante toda a geração e baixava o
+    job inteiro (segments + chunks ≈ 0,5-1,3 MB) só pra atualizar 2 números — o
+    maior dreno de egress do app. Aqui devolve só stage + snapshots de progresso.
+    """
+    job = JOBS.get(job_id)
+    if not job:
+        return jsonify({"error": "Job não encontrado"}), 404
+    out = {"stage": job.get("stage")}
+    if "progress_obj" in job:
+        out["progress"] = job["progress_obj"].snapshot()
+    if "trans_progress_obj" in job:
+        out["trans_progress"] = job["trans_progress_obj"].snapshot()
+    return jsonify(out)
 
 
 @app.post("/api/job/<job_id>/segments")
@@ -532,6 +630,7 @@ def serve_frontend(path):
     return send_from_directory(FRONTEND_DIST, "index.html")
 
 
+auth.ensure_admin()
 _start_cleanup_loop()
 
 

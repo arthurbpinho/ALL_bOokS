@@ -15,6 +15,21 @@ from .parse import Segment
 MAX_CHARS = 4000
 
 
+def _safe_speaker(speaker: str) -> str:
+    """Sanitiza o nome do falante para uso em nome de arquivo.
+
+    Segurança: o `speaker` pode vir do cliente (edição de segmentos) sem validação.
+    Sem isso, um nome como '../../x' escreveria o MP3 fora da pasta do job (path
+    traversal) e uma aspa quebraria o list-file do ffmpeg na concatenação.
+    """
+    s = re.sub(r"[^0-9A-Za-z_-]", "_", speaker or "")
+    return s[:40] or "X"
+
+
+def chunk_filename(index: int, speaker: str) -> str:
+    return f"chunk_{index:05d}_{_safe_speaker(speaker)}.mp3"
+
+
 @dataclass
 class Chunk:
     index: int
@@ -130,7 +145,7 @@ def synthesize(
     def _one(chunk: Chunk):
         if progress.cancelled:
             return
-        out = output_dir / f"chunk_{chunk.index:05d}_{chunk.speaker}.mp3"
+        out = output_dir / chunk_filename(chunk.index, chunk.speaker)
         if out.exists() and out.stat().st_size > 0:
             chunk.path = out
             return

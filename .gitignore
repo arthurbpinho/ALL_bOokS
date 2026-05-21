@@ -2,6 +2,11 @@
 outputs/
 uploads/
 cache/
+
+# Auth (criados em runtime; em prod ficam no volume)
+users.json
+users.tmp
+secret_key
 __pycache__/
 *.pyc
 .venv/

@@ -10,13 +10,36 @@ async function jsonOrThrow(resp) {
 }
 
 export const api = {
+  // ---- Auth ----
+  me: () => fetch(`${BASE}/api/auth/me`).then(r => (r.ok ? r.json() : null)),
+  login: (username, password) =>
+    fetch(`${BASE}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    }).then(jsonOrThrow),
+  logout: () => fetch(`${BASE}/api/auth/logout`, { method: 'POST' }).then(jsonOrThrow),
+  listUsers: () => fetch(`${BASE}/api/auth/users`).then(jsonOrThrow),
+  createUser: (username, password, is_admin = false) =>
+    fetch(`${BASE}/api/auth/users`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, is_admin }),
+    }).then(jsonOrThrow),
+  deleteUser: (username) =>
+    fetch(`${BASE}/api/auth/users/${encodeURIComponent(username)}`, {
+      method: 'DELETE',
+    }).then(jsonOrThrow),
+
   voices: () => fetch(`${BASE}/api/voices`).then(jsonOrThrow),
-  patterns: () => fetch(`${BASE}/api/patterns`).then(jsonOrThrow),
 
   upload: (formData) =>
     fetch(`${BASE}/api/upload`, { method: 'POST', body: formData }).then(jsonOrThrow),
 
   getJob: (id) => fetch(`${BASE}/api/job/${id}`).then(jsonOrThrow),
+
+  // Payload mínimo só pro polling da barra de progresso (vs. baixar o job inteiro).
+  getProgress: (id) => fetch(`${BASE}/api/job/${id}/progress`).then(jsonOrThrow),
 
   updateSegments: (id, segments) =>
     fetch(`${BASE}/api/job/${id}/segments`, {

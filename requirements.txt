@@ -1,5 +1,6 @@
 flask>=3.0
 flask-cors>=4.0
+flask-compress>=1.14
 openai>=1.50
 python-dotenv>=1.0
 pymupdf>=1.24
