@@ -1,57 +1,43 @@
-# Audiobook Generator
+# ALL_bOokS — Gerador de Audiobooks Multi-voz
 
-Gera audiobooks multi-voz a partir de PDF/EPUB: extrai o texto, opcionalmente
-traduz (OpenAI), detecta personagens, atribui vozes e sintetiza com **Edge TTS**
-(gratuito). Backend em Flask, frontend em React + Vite.
+O **ALL_bOokS** transforma um PDF ou EPUB num audiobook narrado por
+múltiplas vozes: extrai o texto, detecta os personagens e o narrador,
+atribui uma voz a cada um e sintetiza o áudio final — tudo a partir do
+upload de um arquivo.
 
-## Como funciona
+---
 
-- **Backend (`app.py`)**: API Flask. Os jobs de geração rodam em *threads* em
-  background e o estado fica **em memória** (dict `JOBS`). Os áudios são gravados
-  em disco (`OUTPUT_DIR`). A concatenação dos MP3s usa **ffmpeg**.
-- **Frontend (`frontend/`)**: SPA React buildada com Vite. Em produção o próprio
-  Flask serve a `frontend/dist` no mesmo host (`BASE = ''`), então não há CORS.
+## O que dá pra fazer
 
-## Rodar localmente
+- **Enviar um PDF ou EPUB** e acompanhar o job de geração em tempo real.
+- **Traduzir o texto** antes da narração (opcional).
+- **Detecção automática de personagens**: o texto é analisado e cada fala é
+  atribuída ao personagem correto, com uma voz própria por personagem.
+- **Escolher entre dezenas de vozes** para narrador e personagens, via
+  **Edge TTS** — gratuito.
+- **Baixar o audiobook final** já concatenado num único MP3.
+- Acesso protegido por **login**, com conta de administrador.
 
-Pré-requisitos: Python 3.12+, Node 20+, `ffmpeg` no PATH.
+## Uso de Inteligência Artificial
 
-```bash
-cp .env.example .env        # cole sua OPENAI_API_KEY
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-cd frontend && npm install && cd ..
-./run.sh                    # sobe Flask (:5000) + Vite (:5173)
-```
+- **OpenAI** cuida da tradução do texto e da **detecção de personagens**
+  (quem fala o quê, ao longo do livro).
+- A **narração em si não usa IA generativa de voz paga** — é feita com
+  **Edge TTS**, mantendo o custo de geração em zero.
+- Os jobs de geração rodam em background (threads), então o usuário
+  continua usando o site enquanto o audiobook é processado.
 
-## Variáveis de ambiente
+## Stack técnica
 
-| Var | Default | Descrição |
-|-----|---------|-----------|
-| `OPENAI_API_KEY` | — | Chave da OpenAI (tradução + detecção de personagens) |
-| `AI_DETECT_MODEL` | `gpt-5.4-mini-...` | Modelo pra detectar personagens |
-| `TRANSLATE_REASONING` | `none` | Esforço de raciocínio na tradução |
-| `OUTPUT_DIR` | `./outputs` | Onde os áudios ficam salvos |
-| `TTS_CONCURRENCY` | `5` | Requisições TTS em paralelo |
+**Backend** — Flask (Python), jobs assíncronos em thread, concatenação de
+áudio via `ffmpeg`.
 
-## Deploy
+**Frontend** — React + Vite, servido pelo próprio Flask em produção (mesma
+origem, sem CORS).
 
-Este app **não é estático** — precisa de um servidor sempre ligado, sistema de
-arquivos e `ffmpeg`. Por isso:
+**Infra** — deploy em container (Railway), com volume persistente para os
+áudios gerados. Detalhes em [`DEPLOY.md`](./DEPLOY.md).
 
-- **GitHub Pages** ❌ — só serve arquivos estáticos.
-- **Cloudflare Workers** ❌ — sem filesystem persistente, com limites de CPU/tempo
-  e sem ffmpeg/threads longas.
-- **Railway** ✅ — container persistente com Python + ffmpeg.
+---
 
-### Railway
-
-1. *New Project → Deploy from GitHub repo* e selecione este repo.
-2. O `Dockerfile` é detectado automaticamente (builda o frontend e instala ffmpeg).
-3. Em **Variables**, defina `OPENAI_API_KEY` (e os opcionais acima).
-4. Adicione um **Volume** montado em `/data` para os áudios sobreviverem a deploys
-   (o container já usa `OUTPUT_DIR=/data/outputs`).
-5. *Generate Domain* pra ter a URL pública.
-
-> ⚠️ Os jobs vivem em memória, então rode **uma única instância** (sem autoscale).
-> Reiniciar o serviço perde os jobs em andamento.
+Projeto pessoal, criado para gerar audiobooks a custo mínimo.
