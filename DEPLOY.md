@@ -28,7 +28,8 @@ cd frontend && npm install && cd ..
 | `AI_DETECT_MODEL` | `gpt-5.4-mini-...` | Modelo pra detectar personagens |
 | `TRANSLATE_REASONING` | `none` | Esforço de raciocínio na tradução |
 | `OUTPUT_DIR` | `./outputs` | Onde os áudios ficam salvos |
-| `TTS_CONCURRENCY` | `5` | Requisições TTS em paralelo |
+| `TTS_CONCURRENCY` | `5` | Requisições TTS em paralelo (só Edge) |
+| `CROSS_ORIGIN_ISOLATION` | `1` | Manda COOP/COEP. Sem isso o Pocket-TTS roda em 1 thread só e fica várias vezes mais lento |
 | `ADMIN_USER` | `admin` | Usuário do login |
 | `ADMIN_PASSWORD` | *(ver aviso abaixo)* | Senha do admin |
 | `SECRET_KEY` | gerada e persistida no volume | Assinatura dos cookies de sessão |
@@ -37,6 +38,28 @@ cd frontend && npm install && cd ..
 > ⚠️ **Sempre defina `ADMIN_PASSWORD` em produção.** Sem essa variável, o admin é
 > semeado com uma senha padrão fixa no código (`audiobook/auth.py`) — aceitável
 > para rodar local, **não** para uma instância pública.
+
+## Os dois motores de voz
+
+| | ☁ Edge TTS (padrão) | 💻 Pocket-TTS |
+|---|---|---|
+| Onde roda | no servidor | no navegador de quem usa |
+| Custo de CPU/banda | do servidor | zero pro servidor |
+| Velocidade | ~5 trechos em paralelo | ~0,6× o tempo real (medido) |
+| Primeiro acesso | imediato | baixa ~178MB de modelo |
+| Vozes | Microsoft Neural (pt-BR nativas) | 8 vozes públicas da Kyutai |
+| Resultado | MP3s no disco do servidor | 1 MP3 montado no navegador |
+| Fechar a aba | pode | interrompe (retoma depois) |
+
+O Pocket-TTS é o modelo aberto da [Kyutai](https://github.com/kyutai-labs/pocket-tts)
+(100M parâmetros, MIT), via o export ONNX int8 da comunidade. Os pesos vêm
+direto do CDN do Hugging Face numa **revisão fixada** — o servidor não serve
+nem armazena nada disso. Código em `frontend/src/ptts/` e o worker de
+inferência em `frontend/public/ptts/` (ver `SEGURANCA.md`).
+
+> ⚠️ Narrar no navegador é **mais lento que ouvir**: um livro de 10h de áudio
+> leva ~17h de CPU. Serve pra quem quer privacidade total ou pra não gastar o
+> servidor — não pra ter o arquivo rápido.
 
 ## Deploy
 

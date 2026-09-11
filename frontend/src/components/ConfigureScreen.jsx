@@ -1,5 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
+import { POCKET_VOICES, PTTS_DOWNLOAD_MB, buildPocketVoiceMap } from '../ptts/config'
+import { getEngine, statusPt } from '../ptts/engine'
+import { playPcm } from '../ptts/play'
 
 const GENDER_LABEL = {
   feminina: '♀ Feminina',
@@ -7,10 +10,14 @@ const GENDER_LABEL = {
   neutra: '⚪ Neutra',
 }
 
-export default function ConfigureScreen({ job, voices, onUpdate, onCancel }) {
+export default function ConfigureScreen({ job, voices, onUpdate, onCancel, onBrowserGenerate }) {
   const [inhibitSleep, setInhibitSleep] = useState(true)
   const [voiceMap, setVoiceMap] = useState(job.voice_map)
+  // 'edge' = Edge TTS no servidor (padrão) · 'browser' = Pocket-TTS na máquina de quem usa
+  const [motor, setMotor] = useState('edge')
+  const [pocketMap, setPocketMap] = useState(() => buildPocketVoiceMap(job.speakers, job.gender_map))
   const [previewing, setPreviewing] = useState(null)
+  const [pocketStatus, setPocketStatus] = useState('')
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState(null)
   const [showText, setShowText] = useState(false)
@@ -22,6 +29,11 @@ export default function ConfigureScreen({ job, voices, onUpdate, onCancel }) {
   const [reparseBold, setReparseBold] = useState(!!job.narrator_bold)
   const [reparseFootnote, setReparseFootnote] = useState(!!job.narrator_footnote)
   const [reparseLoading, setReparseLoading] = useState(false)
+
+  // Re-detectar personagens muda a lista de falantes: refaz a distribuição de vozes.
+  useEffect(() => {
+    setPocketMap(buildPocketVoiceMap(job.speakers, job.gender_map))
+  }, [job.speakers, job.gender_map])
 
   const counts = useMemo(() => {
     const out = {}
@@ -38,23 +50,38 @@ export default function ConfigureScreen({ job, voices, onUpdate, onCancel }) {
     return out
   }, [voices, job.output_lang])
 
+  const sampleFor = (speaker) =>
+    (job.segments.find(s => s.speaker === speaker)?.text || 'Era uma vez, numa noite como esta.').slice(0, 200)
+
   const previewVoice = async (speaker) => {
-    const voice = voiceMap[speaker]
     setPreviewing(speaker)
     try {
-      const sample = job.segments.find(s => s.speaker === speaker)?.text || ''
-      const r = await fetch(api.previewVoiceUrl(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ voice, text: sample.slice(0, 200) }),
-      })
-      const blob = await r.blob()
-      const audio = new Audio(URL.createObjectURL(blob))
-      audio.onended = () => setPreviewing(null)
-      audio.play()
+      if (motor === 'browser') {
+        // Aqui o preview é o teste de fogo: baixa o modelo e sintetiza na hora.
+        const engine = getEngine()
+        engine.onStatus = (txt, estado) => setPocketStatus(statusPt(txt, estado))
+        await engine.load(job.output_lang || 'pt')
+        setPocketStatus('Sintetizando…')
+        const pcm = await engine.speak(sampleFor(speaker), pocketMap[speaker])
+        setPocketStatus('')
+        await playPcm(pcm, engine.sampleRate)
+      } else {
+        const r = await fetch(api.previewVoiceUrl(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ voice: voiceMap[speaker], text: sampleFor(speaker) }),
+        })
+        const blob = await r.blob()
+        const audio = new Audio(URL.createObjectURL(blob))
+        audio.onended = () => setPreviewing(null)
+        audio.play()
+        return
+      }
     } catch (e) {
-      setPreviewing(null)
+      setError(e.cancelled ? null : `Preview falhou: ${e.message}`)
+      setPocketStatus('')
     }
+    setPreviewing(null)
   }
 
   const openTextEditor = () => {
@@ -114,6 +141,10 @@ export default function ConfigureScreen({ job, voices, onUpdate, onCancel }) {
   }
 
   const submit = async () => {
+    if (motor === 'browser') {
+      onBrowserGenerate(pocketMap)
+      return
+    }
     setGenerating(true); setError(null)
     try {
       const updated = await api.generate(job.id, {
@@ -196,10 +227,42 @@ export default function ConfigureScreen({ job, voices, onUpdate, onCancel }) {
       )}
 
       <div className="card">
-        <h3 className="text-xl mb-3">Vozes ({job.speakers.length} personagens)</h3>
+        <h3 className="text-xl mb-3">Onde narrar</h3>
+        <div className="grid sm:grid-cols-2 gap-3 mb-5">
+          <EngineCard
+            active={motor === 'edge'} onClick={() => setMotor('edge')}
+            title="☁ No servidor" subtitle="Edge TTS · Microsoft"
+            lines={[
+              'Rápido: 5 trechos em paralelo',
+              'Pode fechar a aba no meio',
+              `${job.output_lang === 'en' ? 'Inglês' : 'pt-BR'}: vozes neurais nativas`,
+            ]}
+          />
+          <EngineCard
+            active={motor === 'browser'} onClick={() => setMotor('browser')}
+            title="💻 No seu navegador" subtitle="Pocket-TTS · Kyutai (código aberto)"
+            lines={[
+              `Baixa ~${PTTS_DOWNLOAD_MB}MB de modelo na 1ª vez`,
+              'Lento: ~2× a duração do áudio (medido)',
+              'Dá pra pausar e continuar depois',
+              'Não gasta nada do servidor',
+            ]}
+          />
+        </div>
+
+        <h3 className="text-xl mb-2">Vozes ({job.speakers.length} personagens)</h3>
         <p className="text-xs text-ink-muted mb-4">
-          🆓 Vozes Microsoft Edge Neural · {job.output_lang === 'en' ? 'inglês' : 'pt-BR'} · gratuitas
+          {motor === 'browser' ? (
+            <>🔊 Vozes públicas do Pocket-TTS ({POCKET_VOICES.length} opções) · o modelo é
+            treinado em 6 idiomas, mas as amostras de voz vêm do inglês — <strong>ouça o
+            preview antes de narrar o livro inteiro</strong>.</>
+          ) : (
+            <>🆓 Vozes Microsoft Edge Neural · {job.output_lang === 'en' ? 'inglês' : 'pt-BR'} · gratuitas</>
+          )}
         </p>
+        {pocketStatus && (
+          <p className="text-xs text-marrs-dark mb-3">⏳ {pocketStatus}</p>
+        )}
         <div className="space-y-2">
           {job.speakers.map(sp => (
             <div key={sp}
@@ -215,20 +278,37 @@ export default function ConfigureScreen({ job, voices, onUpdate, onCancel }) {
                   </span>
                 </div>
               </div>
-              <select value={voiceMap[sp] || ''}
-                onChange={(e) => setVoiceMap({ ...voiceMap, [sp]: e.target.value })}
-                className="select max-w-sm">
-                <optgroup label="Femininas">
-                  {voicesByGender.feminina.map(v =>
-                    <option key={v.id} value={v.id}>{v.id} — {v.note}</option>
-                  )}
-                </optgroup>
-                <optgroup label="Masculinas">
-                  {voicesByGender.masculina.map(v =>
-                    <option key={v.id} value={v.id}>{v.id} — {v.note}</option>
-                  )}
-                </optgroup>
-              </select>
+              {motor === 'browser' ? (
+                <select value={pocketMap[sp] || ''}
+                  onChange={(e) => setPocketMap({ ...pocketMap, [sp]: e.target.value })}
+                  className="select max-w-sm">
+                  <optgroup label="Femininas">
+                    {POCKET_VOICES.filter(v => v.gender === 'feminina').map(v =>
+                      <option key={v.id} value={v.id}>{v.id}</option>
+                    )}
+                  </optgroup>
+                  <optgroup label="Masculinas">
+                    {POCKET_VOICES.filter(v => v.gender === 'masculina').map(v =>
+                      <option key={v.id} value={v.id}>{v.id}</option>
+                    )}
+                  </optgroup>
+                </select>
+              ) : (
+                <select value={voiceMap[sp] || ''}
+                  onChange={(e) => setVoiceMap({ ...voiceMap, [sp]: e.target.value })}
+                  className="select max-w-sm">
+                  <optgroup label="Femininas">
+                    {voicesByGender.feminina.map(v =>
+                      <option key={v.id} value={v.id}>{v.id} — {v.note}</option>
+                    )}
+                  </optgroup>
+                  <optgroup label="Masculinas">
+                    {voicesByGender.masculina.map(v =>
+                      <option key={v.id} value={v.id}>{v.id} — {v.note}</option>
+                    )}
+                  </optgroup>
+                </select>
+              )}
               <button type="button" onClick={() => previewVoice(sp)}
                 disabled={previewing === sp}
                 className="btn btn-ghost text-sm whitespace-nowrap">
@@ -239,7 +319,7 @@ export default function ConfigureScreen({ job, voices, onUpdate, onCancel }) {
         </div>
       </div>
 
-      <div className="card">
+      <div className={`card ${motor === 'browser' ? 'hidden' : ''}`}>
         <label className="flex items-start gap-3 cursor-pointer">
           <input type="checkbox" className="checkbox mt-1"
             checked={inhibitSleep} onChange={(e) => setInhibitSleep(e.target.checked)} />
@@ -262,7 +342,9 @@ export default function ConfigureScreen({ job, voices, onUpdate, onCancel }) {
         <button onClick={onCancel} className="btn btn-ghost">← Voltar</button>
         <button onClick={submit} disabled={generating}
           className="btn btn-primary text-base px-6 py-3">
-          {generating ? 'Iniciando…' : '🎙 Gerar audiobook (grátis)'}
+          {generating ? 'Iniciando…'
+            : motor === 'browser' ? '💻 Narrar aqui no navegador'
+            : '🎙 Gerar audiobook (grátis)'}
         </button>
       </div>
 
@@ -321,6 +403,24 @@ export default function ConfigureScreen({ job, voices, onUpdate, onCancel }) {
         </Modal>
       )}
     </div>
+  )
+}
+
+function EngineCard({ active, onClick, title, subtitle, lines }) {
+  return (
+    <button type="button" onClick={onClick}
+      className={`text-left rounded p-4 border transition ${
+        active ? 'bg-marrs-50 border-marrs shadow-marrs' : 'bg-cream border-sand hover:border-marrs/40'
+      }`}>
+      <div className="flex items-center gap-2">
+        <span className={`font-semibold ${active ? 'text-marrs-dark' : 'text-ink'}`}>{title}</span>
+        {active && <span className="badge bg-marrs text-cream">usando</span>}
+      </div>
+      <div className="text-xs text-ink-muted mt-0.5">{subtitle}</div>
+      <ul className="text-xs text-ink-soft mt-2 space-y-0.5">
+        {lines.map(l => <li key={l}>· {l}</li>)}
+      </ul>
+    </button>
   )
 }
 

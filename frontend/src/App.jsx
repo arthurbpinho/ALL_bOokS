@@ -4,6 +4,7 @@ import UploadScreen from './components/UploadScreen'
 import TranslateScreen from './components/TranslateScreen'
 import ConfigureScreen from './components/ConfigureScreen'
 import ProgressScreen from './components/ProgressScreen'
+import BrowserGenerateScreen from './components/BrowserGenerateScreen'
 import DoneScreen from './components/DoneScreen'
 import LoginScreen from './components/LoginScreen'
 import AdminUsers from './components/AdminUsers'
@@ -14,6 +15,8 @@ export default function App() {
   const [voices, setVoices] = useState([])
   const [showIntro, setShowIntro] = useState(true)
   const [showAdmin, setShowAdmin] = useState(false)
+  // Mapa de vozes do Pocket-TTS quando a narração roda no navegador (não no servidor).
+  const [browserRun, setBrowserRun] = useState(null)
 
   // Checa a sessão no carregamento
   useEffect(() => {
@@ -31,10 +34,11 @@ export default function App() {
     return () => clearTimeout(t)
   }, [])
 
-  const reset = () => setJob(null)
+  const reset = () => { setBrowserRun(null); setJob(null) }
 
   async function logout() {
     try { await api.logout() } catch { /* ignore */ }
+    setBrowserRun(null)
     setJob(null)
     setUser(null)
   }
@@ -49,10 +53,14 @@ export default function App() {
   let screen
   if (!job) {
     screen = <UploadScreen onUploaded={setJob} />
+  } else if (browserRun) {
+    screen = <BrowserGenerateScreen job={job} voiceMap={browserRun}
+      onBack={() => setBrowserRun(null)} onReset={reset} />
   } else if (job.stage === 'translating') {
     screen = <TranslateScreen job={job} onUpdate={setJob} onCancel={reset} />
   } else if (job.stage === 'ready' || job.stage === 'configuring') {
-    screen = <ConfigureScreen job={job} voices={voices} onUpdate={setJob} onCancel={reset} />
+    screen = <ConfigureScreen job={job} voices={voices} onUpdate={setJob} onCancel={reset}
+      onBrowserGenerate={setBrowserRun} />
   } else if (job.stage === 'generating') {
     screen = <ProgressScreen job={job} onUpdate={setJob} />
   } else if (job.stage === 'done') {

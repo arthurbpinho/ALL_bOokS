@@ -1,6 +1,11 @@
 """API Flask: upload → (opcional traduzir) → configurar vozes → gerar audiobook.
 
-TTS via Edge (gratuito). OpenAI usado apenas pra tradução e detecção via IA.
+Dois motores de TTS:
+  - Edge TTS (padrão), gratuito, roda aqui no servidor;
+  - Pocket-TTS, que roda inteiro no navegador de quem usa (o servidor não vê
+    esse áudio nem gasta CPU com ele) — ver frontend/src/ptts/.
+
+OpenAI usado apenas pra tradução e detecção via IA.
 """
 
 from __future__ import annotations
@@ -58,6 +63,21 @@ app.config.update(
     SESSION_COOKIE_SECURE=os.getenv("COOKIE_SECURE", "1") == "1",
     PERMANENT_SESSION_LIFETIME=30 * 24 * 3600,
 )
+
+# Isolamento cross-origin (COOP/COEP). Sem esses dois cabeçalhos o navegador
+# proíbe SharedArrayBuffer e o Pocket-TTS (WebAssembly) roda em 1 thread só —
+# várias vezes mais lento. Checado: as fontes do Google e o CDN do Hugging Face
+# mandam CORP/CORS, então nada quebra. Desligue com CROSS_ORIGIN_ISOLATION=0.
+CROSS_ORIGIN_ISOLATION = os.getenv("CROSS_ORIGIN_ISOLATION", "1") == "1"
+
+
+@app.after_request
+def _cross_origin_isolation(resp):
+    if CROSS_ORIGIN_ISOLATION:
+        resp.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+        resp.headers.setdefault("Cross-Origin-Embedder-Policy", "require-corp")
+    return resp
+
 
 JOBS: dict[str, dict] = {}
 

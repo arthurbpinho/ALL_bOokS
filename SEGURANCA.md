@@ -47,7 +47,30 @@ Se o painel deixar escolher o comando de instalação, use **`npm ci`**. O `.npm
 
 ---
 
-## 5. 🆘 Se algo der errado
+## 5. 🧩 Código de terceiros que roda no navegador (Pocket-TTS)
+
+O motor de voz que roda no navegador usa código e pesos de fora do npm. O que
+entrou e como está travado:
+
+| O quê | De onde | Como está preso |
+|---|---|---|
+| `inference-worker.js` e `sentencepiece.js` | Space `KevinAHM/pocket-tts-web` | **copiados** pra `frontend/public/ptts/` e versionados no git — não são baixados em runtime |
+| Pesos ONNX (~178MB) | CDN do Hugging Face | URL com **commit fixo** (`PTTS_REV` em `frontend/src/ptts/config.js`); trocar de versão é uma edição consciente |
+| `onnxruntime-web` 1.20.0 | `cdn.jsdelivr.net` | versão fixa no worker (é a única coisa que vem de CDN em runtime) |
+
+Regras:
+
+- O worker foi **auditado e modificado** (marcações `[ALLbOokS]`): só muda a base
+  de URL dos pesos e adia o download do encoder de voz. Ao atualizar, rode o diff
+  contra o upstream antes de colar por cima.
+- Os pesos são só dados (`.onnx`, `.bin`), não código — mas mesmo assim ficam
+  presos ao commit, pra ninguém trocar o modelo debaixo do app.
+- Quem quiser cortar até a dependência do jsDelivr: baixar o
+  `onnxruntime-web` pelo npm e servir junto com o app.
+
+---
+
+## 6. 🆘 Se algo der errado
 
 - Pacote legítimo que precisa compilar e falhou: `npm rebuild nome-do-pacote`
 - Checar vulnerabilidades: `npm audit`
